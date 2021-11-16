@@ -20,7 +20,7 @@ ip-10-0-1-30   NotReady    <none>                 3m   v1.20.6
 ip-10-0-1-31   NotReady    <none>                 3m   v1.20.6
 ```
 
-Calico will be the networking (CNI) and network policy implementation throughout your training lab. To install Calico, we will use an operator, so it will implement and automate the lifecycle of our calico deployment, but first, let's create the necessary custom resources, and pass the configuration options through a manifest. Check the file 1-custom-resources.yaml in the manifest folder for this lab:
+Calico will be the networking (CNI) and network policy implementation throughout your training lab. To install Calico, we will use an operator, so it will implement and automate the lifecycle of our calico deployment, but first, let's create the necessary custom resources, and pass the configuration options through a manifest.
 
 ```
 apiVersion: operator.tigera.io/v1
@@ -42,7 +42,7 @@ spec:
 As you can see, we have defined a pool with the CIDR 10.48.0.0/24. This must be within the range of the pod CIDR when we installed Kubernetes. Here we are defining a smaller subnet within the available range as we will be creating additional pools for other purposes in future labs. Before applying the customer resources and config, let's download and implement the lastest version available for the operator:
 
 ```
-kubectl create -f https://docs.tigera.io/manifests/tigera-operator.yaml
+kubectl create -f https://docs.projectcalico.org/manifests/tigera-operator.yaml
 ```
 
 Check the operator has been successfully rolled out:
@@ -53,7 +53,24 @@ kubectl rollout status -n tigera-operator deployment tigera-operator
 Now, we can apply the manifest which will create the customer resources and needed config:
 
 ```
-kubectl create -f 1-custom-resources.yaml
+kubectl apply -f -<<EOF
+# This section includes base Calico installation configuration.
+# For more information, see: https://docs.projectcalico.org/v3.21/reference/installation/api#operator.tigera.io/v1.Installation
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  # Configures Calico networking.
+  calicoNetwork:
+    # Note: The ipPools section cannot be modified post-install.
+    ipPools:
+    - blockSize: 26
+      cidr: 10.48.0.0/24
+      encapsulation: None
+      natOutgoing: Enabled
+      nodeSelector: all()
+EOF
 ```
 
 And confirm that all of the pods are running with the following command:
@@ -65,7 +82,7 @@ watch kubectl get pods -n calico-system
 As an additional task, we will install calicoctl as binary in our bastion host:
 
 ```
-curl -o calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.19.0/calicoctl"
+curl -o calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.21.0/calicoctl"
 ```
 ```
 chmod +x calicoctl
@@ -87,7 +104,180 @@ The following diagram shows the logical diagram of the application.
 ### 1.2.1. Launch the application using the following commands
 
 ```
-kubectl apply -f 1-yaobank.yaml
+kubectl apply -f -<<EOF
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: yaobank
+  labels:
+    istio-injection: disabled
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database
+  namespace: yaobank
+  labels:
+    app: database
+spec:
+  ports:
+  - port: 2379
+    name: http
+  selector:
+    app: database
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: database
+  namespace: yaobank
+  labels:
+    app: yaobank
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  namespace: yaobank
+spec:
+  selector:
+    matchLabels:
+      app: database
+      version: v1
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: database
+        version: v1
+    spec:
+      serviceAccountName: database
+      containers:
+      - name: database
+        image: calico/yaobank-database:certification
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 2379
+        command: ["etcd"]
+        args:
+          - "-advertise-client-urls"
+          - "http://database:2379"
+          - "-listen-client-urls"
+          - "http://0.0.0.0:2379"
+      nodeSelector:
+        kubernetes.io/hostname: "ip-10-0-1-30.ca-central-1.compute.internal"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: summary
+  namespace: yaobank
+  labels:
+    app: summary
+spec:
+  ports:
+  - port: 80
+    name: http
+  selector:
+    app: summary
+    
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: summary
+  namespace: yaobank
+  labels:
+    app: yaobank
+    database: reader
+    
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: summary
+  namespace: yaobank
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: summary
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: summary
+        version: v1
+    spec:
+      serviceAccountName: summary
+      containers:
+      - name: summary
+        image: calico/yaobank-summary:certification
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+ 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer
+  namespace: yaobank
+  labels:
+    app: customer
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    nodePort: 30180
+    name: http
+  selector:
+    app: customer
+    
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: customer
+  namespace: yaobank
+  labels:
+    app: yaobank
+    summary: reader
+    
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer
+  namespace: yaobank
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: customer
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: customer
+        version: v1
+    spec:
+      serviceAccountName: customer
+      containers:
+      - name: customer
+        image: calico/yaobank-customer:certification
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+      nodeSelector:
+        kubernetes.io/hostname: "ip-10-0-1-31.ca-central-1.compute.internal"
+---
+EOF
 ```
 
 ### 1.2.2. Check the status of the pods, wait until all are RUNNING status.
@@ -111,6 +301,8 @@ For now, the application we deployed is only accesible outside the cluster by me
 
 ```
 curl 10.0.1.20:30180
+```
+```
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 
