@@ -20,7 +20,7 @@ ip-10-0-1-30   NotReady    <none>                 3m   v1.20.6
 ip-10-0-1-31   NotReady    <none>                 3m   v1.20.6
 ```
 
-Calico will be the networking (CNI) and network policy implementation throughout your training lab. To install Calico, we will use an operator, so it will implement and automate the lifecycle of our calico deployment, but first, let's create the necessary custom resources, and pass the configuration options through a manifest.
+Calico will be the networking (CNI) and network policy implementation throughout your training lab. To install Calico, we will use an operator, so it will implement and automate the lifecycle of our calico deployment, but first, let's create the necessary custom resources, and pass the configuration options through a manifest. Check the file 1-custom-resources.yaml in the manifest folder for this lab:
 
 ```
 apiVersion: operator.tigera.io/v1

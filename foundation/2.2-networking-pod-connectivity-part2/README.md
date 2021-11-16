@@ -41,7 +41,18 @@ You can see that we have effectively broken the default ippool into to equal sub
 Apply the manifest and verify the output.
 
 ```
-calicoctl apply -f 2.2-ippool.yaml 
+calicoctl apply -f -<<EOF
+apiVersion: projectcalico.org/v3
+kind: IPPool
+metadata:
+  name: pool2-ipv4-ippool
+spec:
+  blockSize: 26
+  cidr: 10.48.128.0/24
+  ipipMode: Never
+  natOutgoing: true
+  nodeSelector: all()
+EOF
 ```
 
 ```
@@ -91,7 +102,184 @@ namespace "yaobank" deleted
 Now implement the manifest with the changes in the annotations, and check the pods. Note the customer pod retained the old pool IP, while summary and database deployments show an IP address from the new pool we created. 
 
 ```
-kubectl apply -f 2.2-yaobank-ipam.yaml 
+kubectl apply -f -<<EOF
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: yaobank
+  labels:
+    istio-injection: disabled
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database
+  namespace: yaobank
+  labels:
+    app: database
+spec:
+  ports:
+  - port: 2379
+    name: http
+  selector:
+    app: database
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: database
+  namespace: yaobank
+  labels:
+    app: yaobank
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  namespace: yaobank
+spec:
+  selector:
+    matchLabels:
+      app: database
+      version: v1
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: database
+        version: v1
+      annotations:
+        "cni.projectcalico.org/ipv4pools": "[\"pool2-ipv4-ippool\"]"
+    spec:
+      serviceAccountName: database
+      containers:
+      - name: database
+        image: calico/yaobank-database:certification
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 2379
+        command: ["etcd"]
+        args:
+          - "-advertise-client-urls"
+          - "http://database:2379"
+          - "-listen-client-urls"
+          - "http://0.0.0.0:2379"
+      nodeSelector:
+        kubernetes.io/hostname: "ip-10-0-1-30.ca-central-1.compute.internal"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: summary
+  namespace: yaobank
+  labels:
+    app: summary
+spec:
+  ports:
+  - port: 80
+    name: http
+  selector:
+    app: summary
+    
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: summary
+  namespace: yaobank
+  labels:
+    app: yaobank
+    database: reader
+    
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: summary
+  namespace: yaobank
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: summary
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: summary
+        version: v1
+      annotations:
+        "cni.projectcalico.org/ipv4pools": "[\"pool2-ipv4-ippool\"]"
+    spec:
+      serviceAccountName: summary
+      containers:
+      - name: summary
+        image: calico/yaobank-summary:certification
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+ 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer
+  namespace: yaobank
+  labels:
+    app: customer
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    nodePort: 30180
+    name: http
+  selector:
+    app: customer
+    
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: customer
+  namespace: yaobank
+  labels:
+    app: yaobank
+    summary: reader
+    
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer
+  namespace: yaobank
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: customer
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: customer
+        version: v1
+    spec:
+      serviceAccountName: customer
+      containers:
+      - name: customer
+        image: calico/yaobank-customer:certification
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+      nodeSelector:
+        kubernetes.io/hostname: "ip-10-0-1-31.ca-central-1.compute.internal"
+---
+EOF
 ```
 ```
 kubectl get pod -n yaobank -o wide

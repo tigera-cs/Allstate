@@ -62,7 +62,17 @@ We'll simulate this use case in this lab by creating another IP Pool to represen
 
 We're going to create a new pool for `10.48.2.0/24` that is externally routable.
 ```
-calicoctl apply -f 2.3-pool.yaml
+calicoctl apply -f -<<EOF
+apiVersion: projectcalico.org/v3
+kind: IPPool
+metadata:
+  name: external-pool
+spec:
+  cidr: 10.48.2.0/24
+  blockSize: 29
+  ipipMode: Never
+  natOutgoing: true
+EOF
 ```
 ```
 calicoctl get ippools
@@ -97,7 +107,7 @@ ssh worker1
 Make sure calicoctl binary installed on your worker1 node.
 
 ```
-curl -o calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.19.0/calicoctl"
+curl -o calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.21.0/calicoctl"
 ```
 ```
 chmod +x calicoctl
@@ -139,7 +149,15 @@ In this lab we will simulate peering to a router outside of the cluster by peeri
 Add the new BGP Peer:
 
 ```
-calicoctl apply -f 2.3-bgp-peer.yaml
+calicoctl apply -f -<<EOF
+apiVersion: projectcalico.org/v3
+kind: BGPPeer
+metadata:
+  name: bgppeer-global-64512
+spec:
+  peerIP: 10.0.1.10
+  asNumber: 64512
+EOF
 ```
 
 #### 2.3.3.3. Examine the new BGP peering status
